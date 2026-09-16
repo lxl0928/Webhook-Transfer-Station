@@ -1,6 +1,16 @@
 # Webhook Transfer Station · Webhook 中转站
 
+一款强大的、智能的、可溯源的Webhook AI处理中转站
+
 接收 Gitee 仓库事件、夜莺告警及其他服务回调，按规则使用 LLM 整理消息，转发至飞书、企业微信或钉钉。提供管理界面、消息日志、Skill 管理和自然语言操作助手。
+
+
+## 0. 运行示例
+![image1.jpg](https://timioss3.oss-cn-beijing.aliyuncs.com/static/webhook-transfer-station/preview_01.jpg)
+![image2.jpg](https://timioss3.oss-cn-beijing.aliyuncs.com/static/webhook-transfer-station/preview_02.jpg)
+![image3.jpg](https://timioss3.oss-cn-beijing.aliyuncs.com/static/webhook-transfer-station/preview_03.jpg)
+![image4.jpg](https://timioss3.oss-cn-beijing.aliyuncs.com/static/webhook-transfer-station/preview_04.jpg)
+![image5.jpg](https://timioss3.oss-cn-beijing.aliyuncs.com/static/webhook-transfer-station/preview_05.jpg)
 
 ## 1. 先选一条上手路线
 
