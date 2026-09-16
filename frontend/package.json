@@ -1,0 +1,31 @@
+{
+  "name": "webhook-transfer-station-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "lint": "eslint . --max-warnings 0",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "2.3.2",
+    "axios": "^1.20.0",
+    "element-plus": "2.11.4",
+    "vue": "3.5.22",
+    "vue-router": "4.5.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.37.0",
+    "@types/node": "22.18.8",
+    "@vitejs/plugin-vue": "5.2.4",
+    "eslint": "9.37.0",
+    "eslint-plugin-vue": "10.5.0",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.1",
+    "vite": "^6.4.3",
+    "vue-tsc": "3.1.1"
+  }
+}

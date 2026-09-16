@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Webhook station local artifacts
+node_modules/
+frontend/dist/
+.env
+.env.*.local
+*.db
+*.sqlite3
+playwright-report/
+test-results/
