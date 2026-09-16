@@ -48,6 +48,7 @@ class Webhook(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("tb_user.id"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     source_type: Mapped[str] = mapped_column(String(32), default="gitee")
+    source_auth_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     source_auth: Mapped[str] = mapped_column(String(16), default="header", server_default="header")
     source_token_header: Mapped[str] = mapped_column(
         String(64), default="X-Webhook-Token", server_default="X-Webhook-Token"

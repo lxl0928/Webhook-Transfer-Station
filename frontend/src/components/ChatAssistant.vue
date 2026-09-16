@@ -1,11 +1,72 @@
 <script setup lang="ts">
 import BusinessIcon from "./BusinessIcon.vue";
-import { computed, nextTick, onUnmounted, ref } from "vue";
+import MarkdownPreview from "./MarkdownPreview.vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessageBox } from "element-plus";
 import { api } from "../api";
 const emit = defineEmits<{ changed: [] }>();
 const router = useRouter();
+const fab = ref<HTMLButtonElement>();
+const fabPosition = ref<{ x: number; y: number }>();
+const dragging = ref(false);
+let gesture: { id: number; x: number; y: number; left: number; top: number } | undefined;
+let suppressClick = false;
+let fabObserver: ResizeObserver | undefined;
+const fabStyle = computed(() => fabPosition.value ? {
+  left: `${fabPosition.value.x}px`, top: `${fabPosition.value.y}px`,
+  right: "auto", bottom: "auto",
+} : undefined);
+function moveFab(x: number, y: number) {
+  if (!fab.value) return;
+  const box = fab.value.getBoundingClientRect();
+  fabPosition.value = {
+    x: Math.max(8, Math.min(x, window.innerWidth - box.width - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - box.height - 8)),
+  };
+}
+function keepFabVisible() {
+  if (fabPosition.value) moveFab(fabPosition.value.x, fabPosition.value.y);
+}
+function startDrag(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0 || !fab.value) return;
+  const box = fab.value.getBoundingClientRect();
+  gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, left: box.left, top: box.top };
+  suppressClick = false;
+  fab.value.setPointerCapture(event.pointerId);
+}
+function dragFab(event: PointerEvent) {
+  if (!gesture || event.pointerId !== gesture.id) return;
+  const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
+  if (!dragging.value && Math.hypot(dx, dy) < 6) return;
+  dragging.value = true;
+  suppressClick = true;
+  moveFab(gesture.left + dx, gesture.top + dy);
+}
+function endDrag(event: PointerEvent) {
+  if (!gesture || event.pointerId !== gesture.id) return;
+  if (event.type === "pointercancel") suppressClick = true;
+  gesture = undefined;
+  dragging.value = false;
+  if (fab.value?.hasPointerCapture(event.pointerId)) fab.value.releasePointerCapture(event.pointerId);
+}
+function clickFab(event: MouseEvent) {
+  // Pointer dragging must not toggle the panel; keyboard activation still works.
+  if (suppressClick && event.detail !== 0) {
+    suppressClick = false;
+    return;
+  }
+  void show();
+}
+onMounted(() => {
+  window.addEventListener("resize", keepFabVisible);
+  fabObserver = new window.ResizeObserver(keepFabVisible);
+  if (fab.value) fabObserver.observe(fab.value);
+});
+onUnmounted(() => {
+  window.removeEventListener("resize", keepFabVisible);
+  fabObserver?.disconnect();
+});
 interface Message {
   id: string;
   role: string;
@@ -38,7 +99,7 @@ const detail = ref<Detail>({ id: "", messages: [], actions: [] }),
   scroll = ref<HTMLElement>();
 const secrets = ref<Record<string, Record<string, string>>>({});
 const labels: Record<string, string> = {
-  source_secret: "源站校验密钥（新增必填）",
+  source_secret: "源站校验密钥（开启鉴权时必填，更新留空保留）",
   target_url: "群机器人 Webhook URL（新增必填）",
   target_secret: "机器人签名密钥（选填）",
   llm_api_key: "LLM API Key（留空保留）",
@@ -161,10 +222,19 @@ async function remove() {
 </script>
 <template>
   <button
+    ref="fab"
     class="assistant-fab"
+    :class="{ dragging }"
+    :style="fabStyle"
+    title="点击打开或关闭助手，拖动可移动位置"
     :aria-expanded="open"
     aria-label="打开智能助手"
-    @click="show"
+    @pointerdown="startDrag"
+    @pointermove="dragFab"
+    @pointerup="endDrag"
+    @pointercancel="endDrag"
+    @lostpointercapture="endDrag"
+    @click="clickFab"
   >
     {{ open ? "×" : "✦" }}<span v-if="!open">智能助手</span>
   </button>
@@ -226,7 +296,8 @@ async function remove() {
         </template>
         <template v-else>
           <small>{{ m.role === "user" ? "你" : "助手" }}</small>
-          <p v-if="m.content">{{ m.content }}</p>
+          <MarkdownPreview v-if="m.content && m.role === 'assistant'" :content="m.content" />
+          <p v-else-if="m.content">{{ m.content }}</p>
           <small v-for="(call, i) in m.tool_calls" :key="i">调用 {{ call.function.name }}</small><small v-if="m.trace_id" class="trace">Trace: {{ m.trace_id }}</small>
         </template>
       </article>
@@ -309,7 +380,9 @@ async function remove() {
   padding: 15px 21px;
   box-shadow: 0 8px 28px #173d7950;
   z-index: 2100;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   font-size: 20px;
   display: flex;
   gap: 10px;
@@ -317,6 +390,9 @@ async function remove() {
 }
 .assistant-fab span {
   font-size: 14px;
+}
+.assistant-fab.dragging {
+  cursor: grabbing;
 }
 .assistant-panel {
   position: fixed;

@@ -308,3 +308,19 @@ async def test_rule_update_delete_and_skill_create_through_tools(client, auth, h
     )
     assert (await decision(client, auth, cid, detail["actions"][0]["id"])).status_code == 200
     assert not (await client.get(f"/api/skills/{sid}", headers=auth)).json()["enabled"]
+
+
+async def test_chat_create_rule_without_source_auth(client, auth, hook_body, monkeypatch):
+    args = {k: v for k, v in hook_body.items() if k not in {"source_secret", "target_url"}}
+    args.update(source_type="generic", source_auth_enabled=False)
+    cid, detail = await stage(client, auth, monkeypatch, "create_webhook_rule", args)
+    response = await decision(
+        client,
+        auth,
+        cid,
+        detail["actions"][0]["id"],
+        secrets={"target_url": hook_body["target_url"]},
+    )
+    assert response.status_code == 200, response.text
+    rule = response.json()["result"]
+    assert rule["source_auth_enabled"] is False and not rule["source_secret_set"]

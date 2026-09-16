@@ -398,9 +398,13 @@ async def decide(
     ):
         raise HTTPException(422, "确认表单字段无效")
     required = {
-        "create_webhook_rule": {"source_secret", "target_url"},
+        "create_webhook_rule": {"target_url"},
         "change_user_password": {"current_password", "new_password"},
     }.get(action.tool_name, set())
+    if action.tool_name == "create_webhook_rule" and unpack(action.arguments).get(
+        "source_auth_enabled", True
+    ):
+        required.add("source_secret")
     if body.decision == "approve" and any(not body.secrets.get(k) for k in required):
         raise HTTPException(422, "请填写必要的密钥字段")
     if body.decision == "reject":

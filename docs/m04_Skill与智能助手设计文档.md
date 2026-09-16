@@ -93,3 +93,9 @@ enabled: true
 无需新增容器、消息代理或 MCP 端口。更新镜像后执行 `alembic upgrade head`；Compose 的 migrate 服务已经负责迁移。内置 Skill 文件通过 setuptools package-data 纳入安装包。沿用前端 65 秒与 nginx 70 秒超时配置。
 
 验收分三层：pytest + 真实 PostgreSQL 验证权限/事务/并发，MockTransport 验证模型 wire 协议，本地模拟模型配合浏览器验证完整交互。真实模型的 function calling 兼容性、效果与费用需要使用实际供应商配置完成联调，不能用模拟通过代替。
+
+## 8. 源站回调鉴权开关
+
+规则创建、查询和更新工具支持 `source_auth_enabled`，默认 `true`。用户明确要求不校验源站密钥时设为 `false`，创建确认表单仅要求目标 Webhook URL，可留空源站密钥；开启时仍要求源站密钥。更新规则重新开启鉴权时，复用已保存密钥；若没有保存过密钥，必须在确认表单补充至少 8 位密钥。
+
+关闭源站鉴权不改变聊天工具的 JWT、所属用户检查和写操作确认，也不影响目标机器人签名。内置 Skill 文件已同步说明；数据库中已有 Skill 不自动覆盖用户修改，可通过恢复内置项获取新版说明。

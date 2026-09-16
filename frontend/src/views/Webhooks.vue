@@ -30,9 +30,11 @@ const saving = ref(false);
 const dialog = ref(false);
 const editing = ref<string | null>(null);
 const sourceInfo = ref("{}");
+const sourceSecretSet = ref(false);
 const defaults = () => ({
   name: "",
   source_type: "generic" as Hook["source_type"],
+  source_auth_enabled: true,
   source_auth: "header" as Hook["source_auth"],
   source_token_header: "X-Webhook-Token",
   target_mentions: {
@@ -100,6 +102,7 @@ async function load() {
 }
 function open(hook?: Hook) {
   editing.value = hook?.wid ?? null;
+  sourceSecretSet.value = hook?.source_secret_set ?? false;
   Object.assign(form, defaults());
   if (hook) {
     for (const key of Object.keys(defaults()) as (keyof typeof form)[]) {
@@ -121,12 +124,13 @@ async function save() {
     !form.name.trim() ||
     (form.source_type === "gitee" &&
       (!form.source_url || !form.events.length)) ||
-    (!editing.value && (!form.target_url || form.source_secret.length < 8))
+    (!editing.value && !form.target_url) ||
+    (form.source_auth_enabled && (!sourceSecretSet.value || form.source_secret) && form.source_secret.length < 8)
   ) {
     ElMessage.warning(
       form.source_type === "gitee"
-        ? "请填写名称、仓库地址、接收事件、至少 8 位的回调密钥及目标 URL"
-        : "请填写名称、至少 8 位的回调密钥及目标 URL",
+        ? "请填写名称、仓库地址、接收事件及目标 URL；开启回调鉴权时需至少 8 位密钥"
+        : "请填写名称及目标 URL；开启回调鉴权时需至少 8 位密钥",
     );
     return;
   }
@@ -154,6 +158,7 @@ async function save() {
       ? { all: true, user_ids: [], mobiles: [] }
       : form.target_mentions,
   };
+  if (!form.source_auth_enabled) delete body.source_secret;
   if (editing.value) {
     if (!form.source_secret) delete body.source_secret;
     if (!form.target_url) delete body.target_url;
@@ -260,6 +265,7 @@ onMounted(load);
               {{ hook.source_url || "自定义事件入口" }}
             </p>
             <div class="event-tags">
+              <span><BusinessIcon kind="auth" :value="hook.source_auth_enabled ? 'bearer' : 'none'" />{{ hook.source_auth_enabled ? '回调鉴权已开启' : '回调鉴权已关闭' }}</span>
               <span v-if="!hook.events.length"><BusinessIcon kind="event" value="webhook" />全部事件</span>
               <span v-if="hook.target_mentions.all"><BusinessIcon kind="feature" value="all" />@所有人</span>
               <span
@@ -362,7 +368,12 @@ onMounted(load);
             }}
           </div>
         </el-form-item>
-        <el-form-item v-if="form.source_type !== 'gitee'" label="回调鉴权方式">
+        <el-form-item label="源站回调鉴权">
+          <el-switch v-model="form.source_auth_enabled" active-text="开启" inactive-text="关闭" />
+          <div class="field-help">仅控制源站到中转站的密钥校验，不影响目标群机器人签名。</div>
+        </el-form-item>
+        <el-alert v-if="!form.source_auth_enabled" type="warning" show-icon :closable="false" title="关闭后不校验回调密钥，任何持有此回调 URL 的人均可触发消息。规则启停、事件和消息格式校验仍然生效。" />
+        <el-form-item v-if="form.source_auth_enabled && form.source_type !== 'gitee'" label="回调鉴权方式">
           <el-select v-model="form.source_auth">
             <template #prefix><BusinessIcon kind="auth" :value="form.source_auth" /></template>
             <el-option label="请求头密钥" value="header"><BusinessIcon kind="auth" value="header" />请求头密钥</el-option>
@@ -371,7 +382,7 @@ onMounted(load);
           </el-select>
         </el-form-item>
         <el-form-item
-          v-if="form.source_type !== 'gitee' && form.source_auth === 'header'"
+          v-if="form.source_auth_enabled && form.source_type !== 'gitee' && form.source_auth === 'header'"
           label="密钥请求头名称"
         >
           <el-input
@@ -380,8 +391,9 @@ onMounted(load);
           />
         </el-form-item>
         <el-form-item
-          :label="editing ? '更换回调密钥（留空保留）' : '回调密钥'"
-          :required="!editing"
+          v-if="form.source_auth_enabled"
+          :label="sourceSecretSet ? '更换回调密钥（留空保留）' : '回调密钥'"
+          :required="!sourceSecretSet"
         >
           <el-input
             v-model="form.source_secret"
@@ -528,13 +540,14 @@ onMounted(load);
           处理之后加入消息。切换目标平台会清空成员配置，避免使用错误平台的 ID。
         </p>
         <el-form-item label="目标消息模板">
+          <div v-if="form.source_type === 'nightingale' && form.target_type === 'feishu'" class="field-help">夜莺单条告警保留原始字段、时间和事件链接；此模板用于下方 AI 分析区，建议仅填写 llm_output 变量。源站地址用于生成夜莺事件链接。</div>
           <el-input v-model="form.target_template" type="textarea" :rows="4" />
           <div v-pre class="field-help">
             支持 {{ payload }}、{{ event }}、{{ source_url }}、{{
             source_type
             }}、{{ source_name }}、{{ llm_output }}，以及
             {{ payload.title }}、{{payload.events.0.rule_name}} 等 JSON
-            路径。模板为纯文本，系统自动封装平台 JSON。
+            路径。模板生成卡片正文：飞书、钉钉支持 Markdown；企业微信使用原生模板卡片文本布局。卡片标题取规则名称，飞书告警为红色、恢复为绿色。
           </div>
         </el-form-item>
         <el-form-item label="启用此规则">

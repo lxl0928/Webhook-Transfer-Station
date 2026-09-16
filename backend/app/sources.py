@@ -40,6 +40,10 @@ def reject_non_json(value: str):
 
 
 def authenticate_source(request: Request, hook: Webhook, payload) -> None:
+    if hook.source_auth_enabled is False:
+        return
+    if not hook.source_secret:
+        raise HTTPException(401, "源站回调密钥未配置")
     if hook.source_type == "gitee":
         supplied = request.headers.get("X-Gitee-Token") or payload.get("password", "")
     elif hook.source_auth == "query":

@@ -55,6 +55,8 @@ export const sources: Record<string, string> = {
 
 export interface Hook {
   source_type: "gitee" | "nightingale" | "generic";
+  source_auth_enabled: boolean;
+  source_secret_set: boolean;
   source_auth: "header" | "bearer" | "query";
   source_token_header: string;
   target_mentions: Mentions;

@@ -2,8 +2,10 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import re
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,7 +26,13 @@ def client() -> httpx.AsyncClient:
 async def complete(config: dict, message: str, trace_id: str) -> str:
     if not config.get("llm_api_key") or not config.get("llm_model"):
         raise DeliveryError("LLM 未配置 API Key 或模型")
-    host = validate_llm_host(config["llm_host"])
+    try:
+        host = validate_llm_host(config["llm_host"])
+    except ValueError as exc:
+        raise DeliveryError(
+            "LLM Host 校验失败：请检查 LLM_ALLOWED_HOSTS、ALLOW_HTTP_LLM 和 Host 格式；"
+            "修改 .env 后需重启 API 和 worker"
+        ) from exc
     async with client() as http:
         response = await http.post(
             f"{host}/chat/completions",
@@ -51,7 +59,7 @@ async def complete(config: dict, message: str, trace_id: str) -> str:
         raise DeliveryError("LLM 返回格式无效或无文本内容") from exc
 
 
-def build_payload(kind: str, content: str, mentions: dict | None = None) -> dict:
+def build_text_payload(kind: str, content: str, mentions: dict | None = None) -> dict:
     mentions = mentions or {}
     everyone = mentions.get("all", False)
     users = mentions.get("user_ids", [])
@@ -90,7 +98,97 @@ def build_payload(kind: str, content: str, mentions: dict | None = None) -> dict
     return payload
 
 
+def build_payload(
+    kind: str,
+    content: str,
+    mentions: dict | None = None,
+    *,
+    title: str = "中转站通知",
+    event: str = "webhook",
+    detail_url: str | None = None,
+) -> dict:
+    """Build platform-native cards; source templates remain plain template strings."""
+    title = title.strip()[:36] or "中转站通知"
+    content = content.strip()
+    if not content:
+        raise DeliveryError("目标卡片内容不能为空，请检查目标消息模板")
+    if kind == "feishu":
+        content = re.sub(r"<\s*/?\s*at\b", lambda m: "&lt;" + m[0][1:], content, flags=re.I)
+        mentions = mentions or {}
+        ids = ["all"] if mentions.get("all") else mentions.get("user_ids", [])
+        if ids:
+            content += "\n\n" + " ".join(
+                f'<at id="{html.escape(value, quote=True)}"></at>' for value in ids
+            )
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {"tag": "plain_text", "content": title},
+                    "template": {"alert": "red", "recovery": "green"}.get(event, "blue"),
+                },
+                "elements": [{"tag": "markdown", "content": content}],
+            },
+        }
+    else:
+        url = detail_url or get_settings().public_base_url.rstrip("/") + "/#/logs"
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
+            raise DeliveryError("卡片详情地址无效，请检查 PUBLIC_BASE_URL")
+        if kind == "wecom":
+            if len(content) > 1024:
+                raise DeliveryError("企业微信模板卡片正文超过 1024 字符，请缩短提示词或模板")
+            payload = {
+                "msgtype": "template_card",
+                "template_card": {
+                    "card_type": "text_notice",
+                    "main_title": {"title": title},
+                    "sub_title_text": content,
+                    "card_action": {"type": 1, "url": url},
+                },
+            }
+        elif kind == "dingtalk":
+            payload = {
+                "msgtype": "actionCard",
+                "actionCard": {
+                    "title": title,
+                    "text": content,
+                    "singleTitle": "查看中转日志",
+                    "singleURL": url,
+                },
+            }
+        else:
+            raise DeliveryError("不支持的目标平台")
+    if len(json.dumps(payload, ensure_ascii=False).encode()) > 20000:
+        raise DeliveryError("目标卡片超过 20000 UTF-8 字节，请缩短提示词或模板")
+    return payload
+
+
 async def deliver(config: dict, payload: dict, trace_id: str) -> dict:
+    mentions = config.get("target_mentions") or {}
+    notification = None
+    if config["target_type"] in {"wecom", "dingtalk"} and any(
+        mentions.get(key) for key in ("all", "user_ids", "mobiles")
+    ):
+        # Validate both payloads before sending anything. Card formats do not use text @ fields.
+        notification = build_text_payload(
+            config["target_type"],
+            f"[{config.get('name', '中转站通知')}] 请查看上方通知卡片。",
+            mentions,
+        )
+    result = await send_payload(config, payload, trace_id)
+    if notification is not None:
+        try:
+            mention_result = await send_payload(config, notification, trace_id)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, DeliveryError) else type(exc).__name__
+            raise DeliveryError(f"卡片已发送，但 @ 提醒失败：{reason}；重试会再次发送卡片") from exc
+        result = {**result, "mention_response": mention_result}
+    return result
+
+
+async def send_payload(config: dict, payload: dict, trace_id: str) -> dict:
     url = validate_target_url(config["target_type"], config["target_url"])
     params = {}
     body = dict(payload)

@@ -5,7 +5,7 @@ import pytest
 
 from app import worker
 from app.models import WebhookLog
-from app.outbound import DeliveryError, build_payload
+from app.outbound import DeliveryError, build_payload, build_text_payload
 from app.security import decrypt
 from app.templates import context_for, render, validate_template
 
@@ -66,15 +66,15 @@ from app.templates import context_for, render, validate_template
     ],
 )
 def test_mentions_platform_format(kind, mentions, expected):
-    assert build_payload(kind, "hello", mentions) == expected
+    assert build_text_payload(kind, "hello", mentions) == expected
 
 
 def test_feishu_untrusted_at_and_size():
     payload = build_payload(
         "feishu", '<at user_id="all">everyone</at>', {"user_ids": ["ou_trusted"]}
     )
-    assert '<at user_id="all">' not in payload["content"]["text"]
-    assert '<at user_id="ou_trusted">' in payload["content"]["text"]
+    assert '<at user_id="all">' not in payload["card"]["elements"][0]["content"]
+    assert '<at id="ou_trusted">' in payload["card"]["elements"][0]["content"]
     with pytest.raises(DeliveryError):
         build_payload("feishu", "x" * 20000, {"user_ids": ["ou_a"]})
 
@@ -228,9 +228,9 @@ async def test_generic_filter_dedup_and_worker_mentions_snapshot(
     detail = (await client.get(f"/api/webhook-logs/{job_id}", headers=auth)).json()
     assert detail["status"] == "succeeded"
     assert (
-        detail["output_payload"]["content"]["text"]
+        detail["output_payload"]["card"]["elements"][0]["content"]
         == ("处理后的摘要" if llm_enabled else "database down / generic")
-        + '\n<at user_id="ou_owner">成员</at>'
+        + '\n\n<at id="ou_owner"></at>'
     )
     async with database() as db:
         job = await db.get(WebhookLog, job_id)

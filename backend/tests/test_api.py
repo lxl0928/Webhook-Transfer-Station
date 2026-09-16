@@ -182,7 +182,7 @@ async def test_worker_success_preserves_snapshot_after_delete(
     await worker.process_job(job_id)
     detail = (await client.get(f"/api/webhook-logs/{job_id}", headers=auth)).json()
     assert detail["status"] == "succeeded" and detail["attempts"] == 1
-    assert detail["output_payload"]["content"]["text"].startswith("push:")
+    assert detail["output_payload"]["card"]["elements"][0]["content"].startswith("push:")
     assert detail["output_at"] and detail["cost_ms"] is not None
     assert mocked.call_args.args[0]["target_url"].endswith("test-token")
     assert (
@@ -190,7 +190,9 @@ async def test_worker_success_preserves_snapshot_after_delete(
     ).status_code == 409
 
 
-async def test_worker_failure_retry_and_llm(client, auth, hook, hook_body, payload, monkeypatch):
+async def test_worker_failure_retry_and_llm(
+    client, auth, hook, hook_body, payload, monkeypatch, caplog
+):
     await client.put(
         f"/api/webhooks/{hook['wid']}", headers=auth, json=hook_body | {"llm_enabled": True}
     )
@@ -202,8 +204,17 @@ async def test_worker_failure_retry_and_llm(client, auth, hook, hook_body, paylo
     job_id = await worker.claim_job()
     await worker.process_job(job_id)
     detail = (await client.get(f"/api/webhook-logs/{job_id}", headers=auth)).json()
-    assert detail["status"] == "failed" and detail["output_payload"]["content"]["text"] == "summary"
+    assert (
+        detail["status"] == "failed"
+        and detail["output_payload"]["card"]["elements"][0]["content"] == "summary"
+    )
     assert detail["output_at"] is None and detail["finished_at"]
+    assert f"log_id={job_id}" in caplog.text
+    assert f"trace_id={detail['trace_id']}" in caplog.text
+    assert "stage=target_delivery" in caplog.text
+    assert "error_type=DeliveryError" in caplog.text
+    assert "目标平台拒绝消息，code=100" in caplog.text
+    assert "in process_job" in caplog.text
     assert "password" not in complete.call_args.args[1]
     assert (
         await client.post(f"/api/webhook-logs/{job_id}/retries", headers=auth)
@@ -217,6 +228,30 @@ async def test_worker_failure_retry_and_llm(client, auth, hook, hook_body, paylo
     await worker.process_job(job_id)
     detail = (await client.get(f"/api/webhook-logs/{job_id}", headers=auth)).json()
     assert detail["status"] == "succeeded" and detail["attempts"] == 2
+
+
+async def test_worker_unexpected_error_logs_stack_without_credentials(
+    client, auth, hook, hook_body, payload, monkeypatch, caplog
+):
+    await client.put(
+        f"/api/webhooks/{hook['wid']}", headers=auth, json=hook_body | {"llm_enabled": True}
+    )
+    monkeypatch.setattr(
+        worker, "complete", AsyncMock(side_effect=RuntimeError("private-api-key-value"))
+    )
+    deliver = AsyncMock()
+    monkeypatch.setattr(worker, "deliver", deliver)
+    await client.post(hook["url"], json=payload, headers={"X-Gitee-Event": "Merge Request Hook"})
+    job_id = await worker.claim_job()
+    await worker.process_job(job_id)
+    detail = (await client.get(f"/api/webhook-logs/{job_id}", headers=auth)).json()
+    assert detail["status"] == "failed"
+    assert detail["error"] == "处理失败：RuntimeError（阶段：llm）"
+    assert f"log_id={job_id}" in caplog.text
+    assert "stage=llm" in caplog.text and "error_type=RuntimeError" in caplog.text
+    assert "in process_job" in caplog.text
+    assert "private-api-key-value" not in caplog.text
+    deliver.assert_not_awaited()
 
 
 async def test_recover_stale_jobs(client, auth, hook, payload, database):
@@ -249,9 +284,16 @@ async def test_health_endpoints(client, auth, monkeypatch):
 
     monkeypatch.setattr(api, "complete", AsyncMock(return_value="OK"))
     assert (await client.post("/api/health/llm", headers=auth)).json()["llm"] == "ok"
-    monkeypatch.setattr(api, "complete", AsyncMock(side_effect=RuntimeError("secret")))
+    monkeypatch.setattr(
+        api, "complete", AsyncMock(side_effect=RuntimeError("LLM connection refused"))
+    )
     response = await client.post("/api/health/llm", headers=auth)
-    assert response.status_code == 503 and "secret" not in response.text
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "degraded",
+        "llm": "unavailable",
+        "detail": "检查 Host、API Key、模型与网络: LLM connection refused",
+    }
 
 
 @pytest.mark.parametrize(

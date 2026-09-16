@@ -102,7 +102,7 @@ LLM_ALLOWED_HOSTS=api.openai.com
 .venv/bin/alembic current
 ```
 
-预期当前迁移为 `0003 (head)`。`upgrade head` 会把数据库升级到当前代码版本；bootstrap 只创建不存在的管理员，不会覆盖已有账号密码。
+预期当前迁移为 `0004 (head)`。`upgrade head` 会把数据库升级到当前代码版本；bootstrap 只创建不存在的管理员，不会覆盖已有账号密码。
 
 默认账号 `admin` / `Admin#123.`。若修改过 ADMIN 配置或数据库中已有账号，使用相应的实际账号。
 
@@ -268,7 +268,7 @@ LLM 提示词：
 {{llm_output}}
 ```
 
-可用变量：`payload,event,repository,source_url,source_type,source_info,source_name,llm_output`。模板是纯文本，不是 JSON；系统自动包装平台 JSON，正确转义引号和换行。支持安全的 JSON 路径取值，例如 `{{payload.events.0.rule_name}}`、`{{source_info.team}}`，缺失字段输出空字符串；不支持表达式、对象属性调用或二次模板展开。企业微信文本上限按 2048 UTF-8 字节校验，建议中文摘要 500 字以内；超限记录失败，不会静默截断。
+可用变量：`payload,event,repository,source_url,source_type,source_info,source_name,llm_output`。模板生成卡片正文，不需要填写 JSON；系统自动包装平台卡片 JSON，正确转义引号和换行。支持安全的 JSON 路径取值，例如 `{{payload.events.0.rule_name}}`、`{{source_info.team}}`，缺失字段输出空字符串；不支持表达式、对象属性调用或二次模板展开。企业微信卡片正文在本应用限制为 1024 字符，完整卡片在本应用限制为 20000 UTF-8 字节；超限记录失败，不会静默截断正文。
 
 ### 不依赖 Gitee 的接收测试
 
@@ -323,7 +323,7 @@ API 字段示例（以企业微信/钉钉为例）：
 | URL Token | URL 追加 `&token=<URL编码后的回调密钥>`，适合只能填写 URL 的源站   |
 
 
-三种模式只验证当前所选方式；通用源站不读取 payload.password 作为密钥。URL Token 只用于源站回调，不是管理员 JWT。完整带 token 的 URL 属于凭证，系统不会在规则查询中回显；复制 URL 后手动追加密钥。请求日志不记录查询串。
+开启源站回调鉴权时，三种模式只验证当前所选方式；通用源站不读取 payload.password 作为密钥。URL Token 只用于源站回调，不是管理员 JWT。完整带 token 的 URL 属于凭证，系统不会在规则查询中回显；复制 URL 后手动追加密钥。请求日志不记录查询串。
 
 夜莺新版本可使用 Callback 通知媒介配置 POST URL 和鉴权 Header，旧版本只能填回调地址时选 URL Token。接收 JSON 单条对象、数组或 `{ "events": [...] }`；原始内容会完整保留（敏感键脱敏），批量数据作为一条消息处理，不拆分。未提供 `X-Webhook-Event` 时：`is_recovered=true/1/"true"/"1"` 为 `recovery`，数组或 events 数组为 `alert_batch`，其他为 `alert`。可通过源模板提取 `{{payload.rule_name}}`、`{{payload.events.0.rule_name}}`。
 
@@ -389,4 +389,55 @@ curl -i 'http://localhost:8080/webhooks?wid=<通用规则wid>' \
 
 worker 接收时冻结配置，修改规则/Key 不会修复旧消息快照。重试仍用旧快照，且可能产生重复消息；先检查目标实际接收情况。
 
+API 与 worker 是独立进程，各自缓存环境配置。修改 `backend/.env` 中的 `LLM_ALLOWED_HOSTS` 等配置后，需要重启两者；API 的代码热重载不能刷新另一个终端里的 worker。出现“健康检查成功、worker 的 LLM 处理失败”时，应检查 worker 是否仍使用修改前的配置。
+
+worker 失败时输出 ERROR 日志，包含 `trace_id`、`log_id`、`stage`、`error_type`、可安全输出的原因和调用栈位置。阶段包括 `config_snapshot`、`source_template`、`llm`、`target_payload`、`save_output`、`target_delivery`；轮询或数据库异常标记为 `worker_iteration`。不直接输出任意异常正文和局部变量，避免 HTTP URL 中的机器人密钥及 SQL 参数泄露；请求结束仍输出状态与 `cost_ms`。
+
 官方接入参考：[Gitee](https://gitee.com/help)、[飞书机器人](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)、[企业微信机器人](https://developer.work.weixin.qq.com/document/path/91770)、[钉钉机器人](https://open.dingtalk.com/document/robots/custom-robot-access)。平台权限以实际配置和官方说明为准。
+
+## 可选源站鉴权（迁移 0004）
+
+规则字段 `source_auth_enabled` 默认为 true。创建规则时设置 false 可省略 source_secret；启用时仍要求至少 8 位密钥。更新规则时不传 source_secret 会保留原值；从未配置过密钥的规则重新开启时必须同时提供密钥，否则返回 422。
+
+```json
+{
+  "name": "无额外密钥的服务回调",
+  "source_type": "generic",
+  "source_auth_enabled": false,
+  "llm_enabled": false,
+  "target_type": "feishu",
+  "target_url": "https://open.feishu.cn/open-apis/bot/v2/hook/替换为实际机器人标识"
+}
+```
+
+以上为 POST /api/webhooks 的请求示例，管理接口仍需 Bearer JWT。保存后源站可 POST `/webhooks?wid=实际wid`，不需要 token/header/password。鉴权关闭只跳过密钥校验，不跳过规则存在性/启停、请求体校验、Gitee 仓库匹配或事件过滤。飞书/钉钉的 target_secret 签名逻辑保持独立。wid 是具有访问能力的 URL 标识，不是请求方身份验证。
+
+迁移 0004 为旧规则回填 true，不会自动取消旧规则鉴权。不要为了调试直接修改数据库将密钥置空；使用规则开关。已入队消息按接收时的快照继续处理。
+
+
+### 目标通知卡片
+
+中转规则默认输出平台原生卡片，无需数据库迁移；更新代码后重启 worker。已有目标模板继续作为正文使用，卡片标题取规则名称（最多 36 字符）。飞书标题颜色依据归一化事件：`alert` 红色、`recovery` 绿色，其他事件蓝色；批量告警 `alert_batch` 不推断统一的恢复状态。
+
+| 平台 | 格式 | 正文 | @ 提醒 |
+|---|---|---|---|
+| 飞书 | `interactive` | `markdown` 元素 | 卡片内 `<at id="…"></at>` |
+| 企业微信 | `template_card` / `text_notice` | 原生文本布局 `sub_title_text` | 卡片成功后追加文本提醒 |
+| 钉钉 | `actionCard` | Markdown `text` | 卡片成功后追加文本提醒 |
+
+企业微信卡片点击及钉钉“查看中转日志”按钮跳转到 `PUBLIC_BASE_URL/#/logs`，需要管理员登录；部署时将 PUBLIC_BASE_URL 配置成群成员可访问的站点地址，本地 localhost 仅供本机调试。飞书签名、钉钉加签沿用原有配置，逐条消息签名。配置企业微信/钉钉 @ 时会占用两次机器人发送额度；卡片失败不会再发提醒，卡片成功但提醒失败会明确记录“卡片已发送”，手动重试会重复发送卡片。
+
+推荐将目标消息模板简化为 `{{llm_output}}`，由卡片标题显示规则名称；飞书、钉钉可在 LLM 提示词中要求使用 Markdown 小标题、加粗和列表，企业微信使用普通文本分行。无需使用 Go 模板语法 `{{$tpl.title}}`、`{{if …}}`；本项目继续采用现有的安全变量替换语法。
+
+协议参考：[飞书自定义机器人](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)、[企业微信群机器人](https://developer.work.weixin.qq.com/document/path/91770)、[钉钉自定义机器人](https://open.dingtalk.com/document/robots/custom-robot-access)。单元测试模拟平台响应，真实客户端样式、群机器人权限和通知效果仍需实际群验证。
+
+
+### 夜莺原始告警样式（飞书）
+
+单条夜莺 `alert/recovery` 发往飞书时，标题优先使用 `rule_name`，正文固定显示加粗的告警集群、级别状态、告警名称、事件标签、触发时间、发送时间、触发时值。事实字段取自原始消息，LLM 不覆盖这些字段。集群读取 `cluster` 或 `datasource_name`；标签支持数组或对象；时间支持 Unix 秒/毫秒、ISO 时间及北京时间字符串，显示为 UTC+8。缺失触发时间显示“未提供”，缺失发送时间使用当前处理时间。
+
+规则的源站地址应填写夜莺站点地址（例如 `http://8.130.105.70:17000`）；消息中的数字 `id` 用于生成事件详情、屏蔽1小时、查看曲线三个 Markdown 链接。缺少有效地址或事件 ID 时不生成链接。屏蔽链接只跳转到夜莺页面，实际屏蔽期限及提交由夜莺处理，中转站不会自动屏蔽告警。
+
+此模式下目标模板渲染结果作为卡片底部“AI 分析”的内容（仅开启 LLM 时显示），推荐目标模板为 `{{llm_output}}`，提示词要求给出简短处置建议，避免重复固定字段。其他来源、平台及夜莺批量通知仍使用原有模板卡片流程。
+
+截图样式的测试请求已保存为 `scripts/test_nightingale_feishu.sh`，从项目根目录执行 `bash scripts/test_nightingale_feishu.sh`。它使用执行时的当前时间，会真实触发通知；默认 wid 对应本地示例规则且要求源站鉴权关闭。脚本使用截图中的事件 ID 95，模拟请求不会在夜莺创建事件，三个链接指向夜莺现有的事件 95。

@@ -69,7 +69,7 @@ const icons: Record<Kind, Record<string, Component>> = {
   },
   skill: { builtin: Collection, custom: EditPen },
   tool: { read: Document, mutation: Lock },
-  auth: { header: Key, bearer: Lock, query: Link },
+  auth: { header: Key, bearer: Lock, query: Link, none: WarningFilled },
   feature: {
     ai: MagicStick,
     template: Document,

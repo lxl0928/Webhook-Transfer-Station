@@ -58,6 +58,7 @@ def webhook_view(hook: Webhook) -> dict:
         "wid",
         "name",
         "source_type",
+        "source_auth_enabled",
         "source_auth",
         "source_token_header",
         "source_url",
@@ -224,6 +225,8 @@ async def update_hook(
     db: AsyncSession = Depends(get_db),
 ):
     hook = await owned_hook(wid, user, db)
+    if body.source_auth_enabled and not (body.source_secret or hook.source_secret):
+        raise HTTPException(422, "启用源站回调鉴权需要先设置至少 8 位的回调密钥")
     try:
         validate_target_url(body.target_type, body.target_url or decrypt(hook.target_url))
     except ValueError as exc:
@@ -295,7 +298,8 @@ def make_snapshot(hook: Webhook, user: User) -> str:
     tags=["源站回调"],
     responses={200: {"model": Accepted, "description": "通用/夜莺回调已入队，或 delivery ID 重复"}},
     description=(
-        "Gitee 使用 X-Gitee-Token/JSON password。"
+        "source_auth_enabled=false 时无需源站密钥；有效 wid 仅定位规则，非来源身份验证。"
+        "启用鉴权时 Gitee 使用 X-Gitee-Token/JSON password。"
         "其他源站按规则使用自定义密钥头、Bearer 或 URL token。"
         "X-Webhook-Event 指定事件，X-Webhook-Delivery 用于去重。成功响应仅表示入队。"
     ),
@@ -509,10 +513,11 @@ async def llm_health(response: Response, request: Request, user: User = Depends(
     try:
         await complete(config, "Health check", request.state.trace_id)
         return {"status": "ok", "llm": "ok", "cost_ms": int((time.monotonic() - start) * 1000)}
-    except Exception:
+    except Exception as e:
+        print(e)
         response.status_code = 503
         return {
             "status": "degraded",
             "llm": "unavailable",
-            "detail": "检查 Host、API Key、模型与网络",
+            "detail": f"检查 Host、API Key、模型与网络: {str(e)}",
         }

@@ -109,6 +109,7 @@ class Mentions(StrictModel):
 class WebhookFields(StrictModel):
     name: str = Field(min_length=1, max_length=100)
     source_type: Source = "gitee"
+    source_auth_enabled: bool = True
     source_auth: Literal["header", "bearer", "query"] = "header"
     source_token_header: str = Field(default="X-Webhook-Token", pattern=r"^[A-Za-z0-9-]{1,64}$")
     source_url: str = Field(default="", max_length=512)
@@ -185,12 +186,14 @@ class WebhookFields(StrictModel):
 
 
 class WebhookCreate(WebhookFields):
-    source_secret: str = Field(min_length=8, max_length=256)
+    source_secret: str = Field(default="", max_length=256)
     target_url: str = Field(min_length=1, max_length=2048)
     target_secret: str = Field(default="", max_length=512)
 
     @model_validator(mode="after")
     def target(self):
+        if (self.source_auth_enabled or self.source_secret) and len(self.source_secret) < 8:
+            raise ValueError("启用源站回调鉴权时必须配置至少 8 位密钥；非空密钥至少 8 位")
         validate_target_url(self.target_type, self.target_url)
         return self
 

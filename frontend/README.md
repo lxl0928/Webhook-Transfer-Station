@@ -261,3 +261,13 @@ npm run preview -- --host 127.0.0.1
 - [后端指南：模板、鉴权与 @ 人员](../backend/README.md#回调接入与消息规则)
 - [Skill 与智能助手设计](../docs/m04_Skill与智能助手设计文档.md)
 - [已执行验收与尚未联调的外部服务](../docs/验收记录.md)
+
+### 规则表单的源站鉴权
+
+「源站回调鉴权」默认开启。关闭时隐藏鉴权方式和回调密钥输入框，并显示 URL 持有者可触发的提示。开启时，没有已保存密钥的规则必须填写至少 8 位密钥；已配置的规则可留空保留。该开关与「目标机器人签名密钥」独立，对应 API 字段 source_auth_enabled。
+
+### 助手 Markdown 预览
+
+助手回复（含历史消息）使用 `MarkdownPreview.vue` 渲染标题、表格、列表、引用、链接、行内代码和代码块。`src/markdown.ts` 使用 markdown-it 解析，再经 DOMPurify 标签与属性允许列表过滤，保留表格中的 `<br>` 换行及 `{{payload}}` 等模板原文，移除脚本、事件属性和图片等内容。用户输入、工具 JSON 和操作确认参数仍以纯文本展示。
+
+修改渲染逻辑后，在 `frontend` 目录运行 `npm test` 执行格式与安全过滤测试，再运行 `npm run lint` 和 `npm run build`。新增依赖后，其他开发环境先执行 `npm ci`。
